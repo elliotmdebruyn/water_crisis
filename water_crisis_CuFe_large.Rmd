@@ -1,0 +1,229 @@
+---
+22title: "water_crisis_large_data"
+author: "greg"
+date: "February 26, 2017"
+output: html_document
+---
+
+```{r, include=F}
+library(dplyr)
+library(mclust)
+library(ROCR)
+library("plyr")
+library(dplyr)
+library(ggplot2)
+library('reshape2')
+library('gbm')
+library('ROCR')
+library("e1071")
+library("class")
+library("ranger")
+library("TDboost")
+library("caret")
+library("glmnet")
+library("ROCR")
+```
+####In the first water_crisis project I looked at lead, copper, iron, ph, and chlorine. 
+####This was interesting data but it was an unfortunately small set
+####Only 82 in length
+####Here I will do similar analysis on a larger data set 1200 in length.
+####However this set does not have cholrine or pH levels so I cannot account for corrosiveness.
+```{r}
+cilc<-read.csv('cilcc.csv')
+cilc1<-cilc
+# Looking at iron and copper rq
+cor(cilc$Copper, cilc$Iron)
+cor(cilc$Lead, cilc$Iron)
+cor(cilc$Lead, cilc$Copper)
+# possibly a relationship between copper and iron
+
+
+#change to categorical data
+#lets multiply by 100 to make the ranges easier to work with also as.int to rid decimal
+cilc1$Iron<-cilc$Iron*1000
+cilc1$Iron<-log(cilc1$Iron)
+cilc1$Iron<-cilc$Iron*100
+
+cilc1$Lead<-as.integer(cilc1 $Lead)
+cilc1$Copper<-as.integer(cilc1$Copper)
+cilc1$Iron<-as.integer(cilc1$Iron)
+
+summary(cilc1)
+
+#pb above 14ppbs is bad
+#ifelse&mutate to change the variable from numeric to categorical
+cilc3<-cilc1
+cilc3<-mutate(cilc3, lead3 = ifelse(Lead %in% 00:13, "1",
+                                     ifelse(Lead %in% 14:20, "2", "3")))
+
+cilc3<-mutate(cilc3, lead_dich = ifelse(Lead %in% 00:13, "safe", "unsafe"))
+
+cilc3<-mutate(cilc3, copper = ifelse(Copper %in% 00:07, "1",
+                                     ifelse(Copper %in% 08:23, "2",
+                                            ifelse(Copper %in% 24:62, "3", "4"))))
+
+cilc3<-mutate(cilc3, iron = ifelse(Iron %in% 00:08, "1",
+                                     ifelse(Iron %in% 09:14, "2", "3")))
+
+cilc3$lead3<-factor(cilc3$lead3)
+cilc3$copper<-factor(cilc3$copper)
+cilc3$iron<-factor(cilc3$iron)
+```
+##Basic GLM
+```{r}
+library(foreach)
+cilc3$lead_yn<-"Yes"
+cilc3$lead_yn[cilc3$lead_dich=="safe"]<-"No"
+cilc3$lead_yn<-factor(cilc3$lead_yn)
+
+train.perc<-.8
+dat.size<-nrow(cilc3)
+train.amount<-as.integer(dat.size*train.perc)
+train.row.nums<-sample(dat.size, train.amount, replace = F)
+train.set<-subset(cilc3[train.row.nums,])
+test.rows<-setdiff(1:dat.size, train.row.nums)
+test.set<-subset(cilc3[test.rows,])
+
+train<-train.set
+test<-test.set
+set.seed(10) 
+f<-lead_yn~Copper*Iron
+length_divisor<-7  
+iterations<-15 
+predictions<-foreach(m=1:iterations,.combine=cbind) %do% {  
+training_positions <- sample(nrow(train), size=floor((nrow(train)/length_divisor)))  
+train_pos<-1:nrow(train) %in% training_positions  
+lm_fit<-glm(f, data=cilc3, family=binomial(logit))
+predict(lm_fit,newdata=test,type="response")  
+}  
+p<-rowMeans(predictions)
+
+
+class.threshold<-.5
+true.labels<-test.set[,11]
+pred.labels<-rep("No",length(true.labels))
+pred.labels[p>class.threshold]="Yes"
+
+
+num.incorrect.labels<-sum(true.labels!=pred.labels)
+misc.rate<-num.incorrect.labels/length(true.labels)
+misc.rate
+
+pred<-prediction(p,true.labels)
+perf<-performance(pred,'tpr','fpr')
+
+plot(perf,main="ROC")
+abline(0,1,lty=3)
+
+perf<- performance(pred,'auc',fpr.stop=1)
+auc<-slot(perf,"y.values")[[1]]
+auc
+```
+##SMOTE GLM
+####My findings suggests lead concetration can be predicted by copper and lead
+####The unexplained varience in lead concentration is probabaly explained by missing ph, chlorine, and temperature data
+```{r}
+table(cilc3$lead_yn)
+# unbalanced data
+# lets smote this and see if we can still make accurate predictions
+library(DMwR)
+
+cilc3$lead_dich<-factor(cilc3$lead_dic)
+cilc4<-SMOTE(lead_dich~copper*iron, cilc3, k=5, perc.over = 200)
+# check resultstrain
+table(cilc4$lead_dich)
+
+train.perc<-.8
+dat.size<-nrow(cilc4)
+train.amount<-as.integer(dat.size*train.perc)
+train.row.nums<-sample(dat.size, train.amount, replace = F)
+train.set<-subset(cilc4[train.row.nums,])
+test.rows<-setdiff(1:dat.size, train.row.nums)
+test.set<-subset(cilc4[test.rows,])
+
+train<-train.set
+test<-test.set
+set.seed(10) 
+f<-lead_dich~copper*iron
+length_divisor<-7  
+iterations<-15 
+predictions<-foreach(m=1:iterations,.combine=cbind) %do% {  
+training_positions <- sample(nrow(train), size=floor((nrow(train)/length_divisor)))  
+train_pos<-1:nrow(train) %in% training_positions  
+lm_fit<-glm(f, data=cilc4, family=binomial(logit))
+predict(lm_fit,newdata=test,type="response")  
+}  
+p<-rowMeans(predictions)
+
+
+class.threshold<-.5
+true.labels<-test.set[,8]
+pred.labels<-rep("safe",length(true.labels))
+pred.labels[p>class.threshold]="unsafe"
+
+
+num.incorrect.labels<-sum(true.labels!=pred.labels)
+misc.rate<-num.incorrect.labels/length(true.labels)
+misc.rate
+
+pred<-prediction(p,true.labels)
+perf<-performance(pred,'tpr','fpr')
+
+plot(perf,main="ROC")
+abline(0,1,lty=3)
+
+perf<- performance(pred,'auc',fpr.stop=1)
+auc<-slot(perf,"y.values")[[1]]
+auc
+```
+SVM
+```{r}
+cilc<-read.csv('cilcc.csv')
+cilc1<-cilc
+
+cilc1$Lead<-as.integer(cilc1 $Lead)
+
+summary(cilc1)
+
+#pb above 14ppbs is bad
+#ifelse&mutate to change the variable from numeric to categorical
+cilc3<-cilc1
+cilc3<-mutate(cilc3, lead3 = ifelse(Lead %in% 00:13, "1",
+                                     ifelse(Lead %in% 14:20, "2", "3")))
+sum(is.na(cilc3$lead3))
+class(cilc3$lead3)
+factor(cilc3$lead3)
+cilc3$lead3<-factor(cilc3$lead3)
+train.perc<-.8
+dat.size<-nrow(cilc3)
+train.amount<-as.integer(dat.size*train.perc)
+train.row.nums<-sample(dat.size, train.amount, replace = F)
+train.set<-subset(cilc3[train.row.nums,])
+test.rows<-setdiff(1:dat.size, train.row.nums)
+test.set<-subset(cilc3[test.rows,])
+
+library('e1071')
+
+col<-c("Copper", "Iron", "lead3")
+# Now lets narrow parameters to search very small epsilon values
+tune_out<-tune(svm, lead3~Copper*Iron,
+  data=train.set,
+  kernel="radial",
+   ranges = list(epsilon = seq(0,.2,0.01), cost = 2^(2:9))
+  )
+print(tune_out)
+plot(tune_out)
+
+# We don't actually need to hand select the best parameters
+# Finding best model
+bestmodel=tune_out$best.model
+summary(bestmodel)
+
+# Predicting Species
+ypredict<-predict(bestmodel, test.set, type="Class")
+
+table(ypredict, test.set$lead3)
+# This model is predicting most of the safe lead levels correctly
+# However most of the data is safe lead levels so the accuracy paradox makes these results not as significant
+# We need to smote the data and re run this
+```
