@@ -1,0 +1,289 @@
+---
+title: "Water Crisis"
+author: "Greg"
+date: "February 25, 2017"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+
+## EDA
+```{r, include=F}
+library(dplyr)
+library(mclust)
+library(ROCR)
+library("plyr")
+library(dplyr)
+library(ggplot2)
+library('reshape2')
+library('gbm')
+library('ROCR')
+library("e1071")
+library("class")
+library("ranger")
+library("TDboost")
+library("caret")
+library("glmnet")
+library("ROCR")
+```
+```{r}
+#read in dataset
+cilc<-read.csv('cilc.csv')
+head(cilc)
+
+```
+```{r, include=F}
+model_gbm1 <- train(
+  Lead..uM.~.,
+  tuneLength = 5,
+  data = cilc, method = "gbm",
+  trControl = trainControl(method = "cv", number = 5, verboseIter = TRUE)
+)
+```
+```{r, eval=F}
+model_gbm1 <- train(
+  Lead..uM.~.,
+  tuneLength = 5,
+  data = cilc, method = "gbm",
+  trControl = trainControl(method = "cv", number = 5, verboseIter = TRUE)
+)
+```
+```{r}
+head(summary(model_gbm1))
+
+
+cilc1<-cilc
+#change to categorical data
+#lets multiply by 100 to make the ranges easier to work with also as.int to rid decimal
+cilc1$Lead..uM.<-cilc$Lead..uM.*100
+cilc1$Chlorine..mM.<-cilc$Chlorine..mM.*100
+cilc1$pH<-cilc$pH*100
+
+cilc1$Lead..uM.<-as.integer(cilc$Lead..uM.)
+cilc1$Copper..uM.<-as.integer(cilc1$Copper..uM.)
+cilc1$Chlorine..mM.<-as.integer(cilc1$Chlorine..mM.)
+cilc1$pH<-as.integer(cilc1$pH)
+
+plot(density(cilc1$Chlorine..mM.))
+plot(density(cilc1$Copper..uM.))
+plot(density(cilc1$Lead..uM.))
+plot(density(cilc1$pH))
+
+summary(cilc1)
+
+#pb above 14ppbs is bad
+#ifelse&mutate to change the variable from numeric to categorical
+cilc3<-cilc1
+cilc3<-mutate(cilc3, lead = ifelse(Lead..uM. %in% 00:13, "1",
+                                     ifelse(Lead..uM. %in% 14:20, "2", "3")))
+
+cilc3<-mutate(cilc3, lead_dich = ifelse(Lead..uM. %in% 00:13, "safe", "unsafe"))
+
+#copper above 14ppbs is bad
+#ifelse&mutate to change the variable from numeric to categorical
+cilc3<-mutate(cilc3, copper = ifelse(Copper..uM. %in% 00:75, "1",
+                                     ifelse(Copper..uM. %in% 76:160, "2",
+                                            ifelse(Copper..uM. %in% 161:240, "3", "4"))))
+
+cilc3<-mutate(cilc3, chlorine = ifelse(Chlorine..mM. %in% 00:47, "1",
+                                     ifelse(Chlorine..mM. %in% 48:66, "2",
+                                            ifelse(Chlorine..mM. %in% 67:78, "3", "4"))))
+
+cilc3<-mutate(cilc3, pH = ifelse(pH %in% 00:723, "1",
+                                     ifelse(pH %in% 724:729, "2",
+                                            ifelse(pH %in% 730:737, "3", "4"))))
+
+
+
+cilc3$lead<-factor(cilc3$lead)
+levels(cilc3$lead)
+cilc3$copper<-factor(cilc3$copper)
+cilc3$lead_dich<-factor(cilc3$lead_dich)
+cilc3$chlorine<-factor(cilc3$chlorine)
+cilc3$pH<-factor(cilc3$pH)
+summary(cilc3)
+
+
+
+
+# For the most part higher copper means high lead.
+ggplot(data=cilc3, aes(x=Lead..uM., fill=copper, colour=copper))+ geom_density()+scale_x_log10()+facet_wrap(~copper)+geom_rug()
+
+# There is a group along the y axis where lead does not increase as copper increases
+# I think this is because these houses have the lead pipes with copper fittings but the Chloride and pH levels are non corrosive
+
+# In this graph we see this group along the y-axis is 
+ggplot(data=cilc3, aes(Lead..uM., Copper..uM., col=copper))+ geom_point()+geom_jitter(width=.5,height=.5, alpha=.2)+xlim(0,600)+ylim(0,300)
+# In this graph we see the high copper and high lead levels are purple which is the highest chlorine group
+ggplot(data=cilc3, aes(Lead..uM., Copper..uM., col=chlorine))+ geom_point()+geom_jitter(width=.5,height=.5, alpha=.2)+xlim(0,600)+ylim(0,300)
+
+# pH
+ggplot(data=cilc3, aes(x=Lead..uM., fill=pH, colour=pH))+ geom_density()+scale_x_log10()+facet_wrap(~pH)+geom_rug()
+
+
+
+
+
+
+
+library(cluster) 
+library(fpc)
+wssplot <- function(data, nc=8, seed=1234){
+               wss <- (nrow(data)-1)*sum(apply(data,2,var))
+               for (i in 2:nc){
+                    set.seed(seed)
+                    wss[i] <- sum(kmeans(data, centers=i)$withinss)}
+                plot(1:nc, wss, type="b", xlab="Number of Clusters",
+                     ylab="Within groups sum of squares")
+}
+
+cilck <- dplyr::select(cilc3, copper, lead, pH, chlorine)
+
+wssplot(cilck)
+# 2 or 3 clusters
+fit.km3<-kmeans(cilck, 3, nstart = 25)
+#seeing the clusters compared to different categorical variables
+table(cilc3$lead, fit.km3$cluster)
+table(cilc3$copper, fit.km3$cluster)
+table(cilc3$pH, fit.km3$cluster)
+table(cilc3$chlorine, fit.km3$cluster)
+
+clusplot(cilck, fit.km3$cluster)
+
+
+
+
+cilck <- dplyr::select(cilc3, copper, lead, pH)
+
+wssplot(cilck)
+# 2 or 3 clusters
+fit.km3<-kmeans(cilck, 3, nstart = 25)
+#seeing the clusters compared to different categorical variables
+table(cilc3$lead, fit.km3$cluster)
+table(cilc3$copper, fit.km3$cluster)
+table(cilc3$pH, fit.km3$cluster)
+table(cilc3$chlorine, fit.km3$cluster)
+
+clusplot(cilck, fit.km3$cluster)
+
+
+
+
+cilck <- dplyr::select(cilc3, copper, lead, chlorine)
+
+wssplot(cilck)
+# 2 or 3 clusters
+fit.km3<-kmeans(cilck, 3, nstart = 25)
+#seeing the clusters compared to different categorical variables
+table(cilc3$lead, fit.km3$cluster)
+table(cilc3$copper, fit.km3$cluster)
+table(cilc3$chlorine, fit.km3$cluster)
+
+clusplot(cilck, fit.km3$cluster)
+```
+
+
+## GLM
+```{r}
+cilc3$lead_yn<-"Yes"
+cilc3$lead_yn[cilc3$lead_dich=="safe"]<-"No"
+cilc3$lead_yn<-factor(cilc3$lead_yn)
+
+train.perc<-.8
+dat.size<-nrow(cilc3)
+train.amount<-as.integer(dat.size*train.perc)
+train.row.nums<-sample(dat.size, train.amount, replace = F)
+train.set<-subset(cilc3[train.row.nums,])
+test.rows<-setdiff(1:dat.size, train.row.nums)
+test.set<-subset(cilc3[test.rows,])
+
+fit<-glm(lead_yn~copper*chlorine, cilc3, family=binomial(logit))
+
+class.threshold<-.5
+p<-predict(fit, test.set, type="response")
+true.labels<-test.set[,12]
+pred.labels<-rep("No",length(true.labels))
+pred.labels[p>class.threshold]="Yes"
+
+
+num.incorrect.labels<-sum(true.labels!=pred.labels)
+misc.rate<-num.incorrect.labels/length(true.labels)
+misc.rate
+
+pred<-prediction(p,true.labels)
+perf<-performance(pred,'tpr','fpr')
+
+plot(perf,main="ROC")
+abline(0,1,lty=3)
+
+perf<- performance(pred,'auc',fpr.stop=1)
+auc<-slot(perf,"y.values")[[1]]
+auc
+```
+
+## GLM with bagging
+```{r}
+library(foreach)
+train<-train.set
+test<-test.set
+set.seed(10) 
+f<-lead_yn~copper*chlorine
+length_divisor<-7  
+iterations<-15 
+predictions<-foreach(m=1:iterations,.combine=cbind) %do% {  
+training_positions <- sample(nrow(train), size=floor((nrow(train)/length_divisor)))  
+train_pos<-1:nrow(train) %in% training_positions  
+lm_fit<-glm(f, data=cilc3, family=binomial(logit))
+predict(lm_fit,newdata=test,type="response")  
+}  
+p1<-rowMeans(predictions)
+
+true.labels<-test.set[,12]
+pred.labels2<-rep("No",length(true.labels))
+pred.labels2[p1>class.threshold]="Yes"
+
+
+num.incorrect.labels<-sum(true.labels!=pred.labels2)
+misc.rate<-num.incorrect.labels/length(true.labels)
+misc.rate
+
+
+pred<-prediction(p,true.labels)
+perf<-performance(pred,'tpr','fpr')
+
+plot(perf,main="ROC")
+abline(0,1,lty=3)
+
+perf<- performance(pred,'auc',fpr.stop=1)
+auc<-slot(perf,"y.values")[[1]]
+auc
+```
+
+
+## SVM classification
+```{r}
+library('e1071')
+
+col<-c("copper", "chlorine", "lead")
+
+
+# Now lets narrow parameters to search very small epsilon values
+tune_out<-tune(svm, lead~copper*chlorine,
+  data=train.set,
+  kernel="radial",
+   ranges = list(epsilon = seq(0,.2,0.01), cost = 2^(2:9))
+  )
+print(tune_out)
+plot(tune_out)
+
+# We don't actually need to hand select the best parameters
+# Finding best model
+bestmodel=tune_out$best.model
+summary(bestmodel)
+
+# Predicting Species
+ypredict<-predict(bestmodel, test.set, type="Class")
+
+table(ypredict, test.set$lead)
+```
