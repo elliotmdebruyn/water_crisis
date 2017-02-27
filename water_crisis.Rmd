@@ -1,12 +1,9 @@
----
-title: "Water Crisis"
-author: "Greg"
-date: "February 25, 2017"
-output:
-  pdf_document: default
-  html_document: default
----
 
+# **Flint Water Crisis**
+
+
+## Summary
+#####This is a very small data set where I explore the relationship between chlorine, copper, and lead concentration. There is a clear relationship between copper and lead concentration. However, I will need to compliment this data to find more significant relationships between other compounds and elements.
 
 ## EDA
 ```{r, include=F}
@@ -50,12 +47,15 @@ model_gbm1 <- train(
 )
 ```
 ```{r}
+# I ran a gbm to take a look at the relative influence of the variables on lead
 head(summary(model_gbm1))
 
 
 cilc1<-cilc
-#change to categorical data
-#lets multiply by 100 to make the ranges easier to work with also as.int to rid decimal
+# Lets change continueous variables to categorical
+# Use quartile ranges to make the categories
+# category 1 being the first quartile etc
+# Lead categories will be based off of the microparts per billion that are considered safe by the EPA
 cilc1$Lead..uM.<-cilc$Lead..uM.*100
 cilc1$Chlorine..mM.<-cilc$Chlorine..mM.*100
 cilc1$pH<-cilc$pH*100
@@ -237,14 +237,15 @@ train_pos<-1:nrow(train) %in% training_positions
 lm_fit<-glm(f, data=cilc3, family=binomial(logit))
 predict(lm_fit,newdata=test,type="response")  
 }  
-p1<-rowMeans(predictions)
+p<-rowMeans(predictions)
 
+class.threshold<-.5
 true.labels<-test.set[,12]
-pred.labels2<-rep("No",length(true.labels))
-pred.labels2[p1>class.threshold]="Yes"
+pred.labels<-rep("No",length(true.labels))
+pred.labels[p>class.threshold]="Yes"
 
 
-num.incorrect.labels<-sum(true.labels!=pred.labels2)
+num.incorrect.labels<-sum(true.labels!=pred.labels)
 misc.rate<-num.incorrect.labels/length(true.labels)
 misc.rate
 
